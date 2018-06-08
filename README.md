@@ -9,4 +9,7 @@ I took the first day of this challenge to really figure out what I can do in ord
 ## Day 2 - Perceptron Algorithm
 Decided to code up the perceptron algorithm and visualize its working. Still need to work on figuring out the intermediate results lines to be plotted will do it in week 3
 
+## Day 3 - Plotting result of the perceptron
+finally figured out how to plot the classification boundary while learning the line of best fit with the perceptron algorithm.
+
 > 100 days of code [inspired by Alexander Kallaway](http://100daysofcode.com/)
