@@ -50,12 +50,24 @@ def trainPerceptronAlgorithm(X, y, learn_rate=0.01, num_epochs=50):
         W, b = perceptronStep(X, y, W, b, learn_rate)
         boundary_lines.append([-W[0]/W[1], -b/W[1]])
     return boundary_lines
-
 def drawBoundaries(boundary_lines):
     print(boundary_lines)
 
 def plotPerceptron(X, y, boundary_lines):
-    plt.scatter(x=X[:, 0], y=X[:, 1], c=y, cmap=plt.cm.coolwarm_r, s=20)
+    X0, X1 = X[:, 0], X[:, 1]
+    x_min, x_max = X0.min(), X0.max()
+    plt.scatter(x=X0, y=X1, c=y, cmap=plt.cm.coolwarm_r, s=20)
+    for i in range(len(boundary_lines)):
+        for j in np.linspace(x_min, x_max):
+            y = boundary_lines[i][0][0]*j + boundary_lines[i][1][0]
+            #print(j, y)
+            if y <= X1.max() and y >= X1.min():
+                plt.plot(j, y, 'go', markersize=1)
+    for j in np.linspace(x_min, x_max):
+        y = boundary_lines[len(boundary_lines)-1][0][0] * \
+            j + boundary_lines[len(boundary_lines)-1][1][0]
+        if y <= X1.max() and y >= X1.min():
+            plt.plot(j, y, 'ko', markersize=2.5)
     plt.show()
 
 
