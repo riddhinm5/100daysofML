@@ -22,8 +22,9 @@ The Deep Learning Specialization includes:
     - Course 5: Sequence Models
 
 Sources:
-    - GitHub: kuta-ndze/neural-network-and-deep-learning-specialization
-    - DeepLearning.AI Community Forum
+    - GitHub: kuta-ndze/neural-network-and-deep-learning-specialization (Courses 1-4)
+    - GitHub: quanghuy0497/Deep-Learning-Specialization (Course 5)
+    - DeepLearning.AI Community Forum (backup)
 """
 
 import argparse
@@ -99,7 +100,7 @@ DEEP_LEARNING_COURSES = [
 
 # GitHub raw content URLs for the PDFs
 GITHUB_SOURCES = [
-    # Primary source - kuta-ndze repo
+    # Primary source - kuta-ndze repo (Courses 1-4)
     {
         "base_url": "https://raw.githubusercontent.com/kuta-ndze/neural-network-and-deep-learning-specialization/main",
         "course_paths": {
@@ -121,6 +122,14 @@ GITHUB_SOURCES = [
         },
     },
 ]
+
+# Direct URLs for Course 5 (Sequence Models) - different filename format
+COURSE_5_DIRECT_URLS = {
+    1: "https://raw.githubusercontent.com/quanghuy0497/Deep-Learning-Specialization/main/Course%205%20-%20Sequence%20Models/Lecture%20Slide/Lecture01_Recurrent%20Neural%20Network.pdf",
+    2: "https://raw.githubusercontent.com/quanghuy0497/Deep-Learning-Specialization/main/Course%205%20-%20Sequence%20Models/Lecture%20Slide/Lecture02_Word%20Embeddings.pdf",
+    3: "https://raw.githubusercontent.com/quanghuy0497/Deep-Learning-Specialization/main/Course%205%20-%20Sequence%20Models/Lecture%20Slide/Lecture03_Sequence%20model%20and%20Attention%20mechanism.pdf",
+    4: "https://raw.githubusercontent.com/quanghuy0497/Deep-Learning-Specialization/main/Course%205%20-%20Sequence%20Models/Lecture%20Slide/Lecuture04_Transformer%20Network.pdf",
+}
 
 # DeepLearning.AI Community Forum PDF URLs (backup source)
 COMMUNITY_URLS = {
@@ -212,6 +221,13 @@ class NotesDownloader:
         self, course_num: int, week_num: int, filename: str, filepath: Path
     ) -> bool:
         """Try to download from GitHub sources."""
+        # Special handling for Course 5 - use direct URLs first
+        if course_num == 5 and week_num in COURSE_5_DIRECT_URLS:
+            url = COURSE_5_DIRECT_URLS[week_num]
+            if self.download_file(url, filepath, f"Week {week_num}"):
+                return True
+
+        # Try standard GitHub sources
         for source in GITHUB_SOURCES:
             if course_num not in source["course_paths"]:
                 continue
