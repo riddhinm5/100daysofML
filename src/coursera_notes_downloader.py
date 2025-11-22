@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """
-Coursera DeepLearning.AI Deep Learning Specialization Notes Downloader
+DeepLearning.AI Deep Learning Specialization Notes Downloader
 
-This script downloads lecture notes, slides, and supplementary materials from
-the DeepLearning.AI Deep Learning Specialization on Coursera.
+Downloads lecture notes (PDFs) for all 5 courses in the Deep Learning Specialization
+from publicly available GitHub repositories.
 
 Requirements:
-    pip install requests beautifulsoup4 tqdm
+    pip install requests tqdm
 
 Usage:
-    1. Log into Coursera in your browser
-    2. Get your CAUTH cookie value from browser developer tools
-    3. Run: python coursera_notes_downloader.py --cauth YOUR_CAUTH_COOKIE
+    python coursera_notes_downloader.py                  # Download all courses
+    python coursera_notes_downloader.py --course 1       # Download only Course 1
+    python coursera_notes_downloader.py --output my_dir  # Custom output directory
+    python coursera_notes_downloader.py --list-courses   # List available courses
 
 The Deep Learning Specialization includes:
     - Course 1: Neural Networks and Deep Learning
@@ -19,540 +20,393 @@ The Deep Learning Specialization includes:
     - Course 3: Structuring Machine Learning Projects
     - Course 4: Convolutional Neural Networks
     - Course 5: Sequence Models
+
+Sources:
+    - GitHub: kuta-ndze/neural-network-and-deep-learning-specialization
+    - DeepLearning.AI Community Forum
 """
 
 import argparse
-import json
 import os
-import re
 import sys
 import time
 from pathlib import Path
-from urllib.parse import urljoin, urlparse
 
 try:
     import requests
-    from bs4 import BeautifulSoup
     from tqdm import tqdm
 except ImportError as e:
     print(f"Missing required package: {e}")
-    print("Install with: pip install requests beautifulsoup4 tqdm")
+    print("Install with: pip install requests tqdm")
     sys.exit(1)
 
 
-# DeepLearning.AI Deep Learning Specialization course slugs
+# Course definitions with PDF URLs from GitHub
 DEEP_LEARNING_COURSES = [
     {
-        "slug": "neural-networks-deep-learning",
+        "number": 1,
         "name": "Course 1 - Neural Networks and Deep Learning",
+        "folder": "C1_Neural_Networks_and_Deep_Learning",
+        "weeks": [
+            {"week": 1, "filename": "C1_W1.pdf"},
+            {"week": 2, "filename": "C1_W2.pdf"},
+            {"week": 3, "filename": "C1_W3.pdf"},
+            {"week": 4, "filename": "C1_W4.pdf"},
+        ],
     },
     {
-        "slug": "deep-neural-network",
+        "number": 2,
         "name": "Course 2 - Improving Deep Neural Networks",
+        "folder": "C2_Improving_Deep_Neural_Networks",
+        "weeks": [
+            {"week": 1, "filename": "C2_W1.pdf"},
+            {"week": 2, "filename": "C2_W2.pdf"},
+            {"week": 3, "filename": "C2_W3.pdf"},
+        ],
     },
     {
-        "slug": "machine-learning-projects",
+        "number": 3,
         "name": "Course 3 - Structuring Machine Learning Projects",
+        "folder": "C3_Structuring_ML_Projects",
+        "weeks": [
+            {"week": 1, "filename": "C3_W1.pdf"},
+            {"week": 2, "filename": "C3_W2.pdf"},
+        ],
     },
     {
-        "slug": "convolutional-neural-networks",
+        "number": 4,
         "name": "Course 4 - Convolutional Neural Networks",
+        "folder": "C4_Convolutional_Neural_Networks",
+        "weeks": [
+            {"week": 1, "filename": "C4_W1.pdf"},
+            {"week": 2, "filename": "C4_W2.pdf"},
+            {"week": 3, "filename": "C4_W3.pdf"},
+            {"week": 4, "filename": "C4_W4.pdf"},
+        ],
     },
     {
-        "slug": "nlp-sequence-models",
+        "number": 5,
         "name": "Course 5 - Sequence Models",
+        "folder": "C5_Sequence_Models",
+        "weeks": [
+            {"week": 1, "filename": "C5_W1.pdf"},
+            {"week": 2, "filename": "C5_W2.pdf"},
+            {"week": 3, "filename": "C5_W3.pdf"},
+            {"week": 4, "filename": "C5_W4.pdf"},
+        ],
     },
 ]
 
+# GitHub raw content URLs for the PDFs
+GITHUB_SOURCES = [
+    # Primary source - kuta-ndze repo
+    {
+        "base_url": "https://raw.githubusercontent.com/kuta-ndze/neural-network-and-deep-learning-specialization/main",
+        "course_paths": {
+            1: "Course%201",
+            2: "Course%202",
+            3: "Course%203",
+            4: "Course%204",
+        },
+    },
+    # Alternative source - amanchadha repo
+    {
+        "base_url": "https://raw.githubusercontent.com/amanchadha/coursera-deep-learning-specialization/master",
+        "course_paths": {
+            1: "C1%20-%20Neural%20Networks%20and%20Deep%20Learning",
+            2: "C2%20-%20Improving%20Deep%20Neural%20Networks%20Hyperparameter%20tuning%2C%20Regularization%20and%20Optimization",
+            3: "C3%20-%20Structuring%20Machine%20Learning%20Projects",
+            4: "C4%20-%20Convolutional%20Neural%20Networks",
+            5: "C5%20-%20Sequence%20Models",
+        },
+    },
+]
 
-class CourseraDownloader:
-    """Downloads course materials from Coursera."""
+# DeepLearning.AI Community Forum PDF URLs (backup source)
+COMMUNITY_URLS = {
+    # These are the direct download URLs from the DeepLearning.AI community forum
+    # Format: Course -> Week -> URL
+    1: {
+        1: "https://community.deeplearning.ai/uploads/short-url/wvPHRq5CE7E7mxgPKlaCwww3Myl.pdf",
+        2: "https://community.deeplearning.ai/uploads/short-url/oBqLdIh8M9FLtPKcQJmrNK2PmLC.pdf",
+    },
+    4: {
+        1: "https://community.deeplearning.ai/uploads/short-url/s4PQmCGlqxnkAuVmLDYe3PLwBIT.pdf",
+        2: "https://community.deeplearning.ai/uploads/short-url/ebdMzYwLwVKKU11ueqP6kGZUdSC.pdf",
+        3: "https://community.deeplearning.ai/uploads/short-url/4YNpz9nOYz2TxGOJA0aCaVfDcW8.pdf",
+        4: "https://community.deeplearning.ai/uploads/short-url/ohwqkwmLfXLzJ24LLSQ0wIo9xK.pdf",
+    },
+    5: {
+        1: "https://community.deeplearning.ai/uploads/short-url/cVIWHyHWsaJdXPJqChxBSJJUcxN.pdf",
+        2: "https://community.deeplearning.ai/uploads/short-url/5n3vVh8lMwFXLB5yYWwKYU2mO85.pdf",
+        3: "https://community.deeplearning.ai/uploads/short-url/iBJn61kFq4EZTT6FTzuswOKLphG.pdf",
+        4: "https://community.deeplearning.ai/uploads/short-url/pPYIyqLWnmO2KoVqLqJSy5oaGYC.pdf",
+    },
+}
 
-    BASE_URL = "https://www.coursera.org"
-    API_URL = "https://www.coursera.org/api"
 
-    def __init__(self, cauth_cookie: str, output_dir: str = "coursera_notes"):
-        """
-        Initialize the downloader.
+class NotesDownloader:
+    """Downloads Deep Learning Specialization lecture notes."""
 
-        Args:
-            cauth_cookie: The CAUTH cookie value from a logged-in Coursera session
-            output_dir: Directory to save downloaded files
-        """
+    def __init__(self, output_dir: str = "deeplearning_notes"):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
-
         self.session = requests.Session()
-        self.session.cookies.set("CAUTH", cauth_cookie, domain=".coursera.org")
         self.session.headers.update(
             {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                 "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "application/json, text/plain, */*",
-                "Accept-Language": "en-US,en;q=0.9",
             }
         )
 
-    def get_course_materials(self, course_slug: str) -> dict:
-        """
-        Get the course materials/curriculum structure.
-
-        Args:
-            course_slug: The course URL slug
-
-        Returns:
-            Course materials data
-        """
-        # Try the on-demand course API
-        url = f"{self.API_URL}/onDemandCourseMaterials.v2"
-        params = {
-            "q": "slug",
-            "slug": course_slug,
-            "includes": "modules,lessons,items",
-            "fields": "moduleIds,onDemandCourseMaterialModules.v1(name,slug,lessonIds),"
-            "onDemandCourseMaterialLessons.v1(name,slug,itemIds),"
-            "onDemandCourseMaterialItems.v2(name,slug,contentSummary,itemLockedReasonCode)",
-        }
-
-        response = self.session.get(url, params=params)
-        if response.status_code == 200:
-            return response.json()
-
-        # Alternative API endpoint
-        url = f"{self.API_URL}/onDemandCourses.v1"
-        params = {"q": "slug", "slug": course_slug}
-        response = self.session.get(url, params=params)
-
-        if response.status_code == 200:
-            return response.json()
-
-        print(f"Failed to get course materials for {course_slug}: {response.status_code}")
-        return {}
-
-    def get_course_id(self, course_slug: str) -> str:
-        """Get the course ID from the slug."""
-        url = f"{self.API_URL}/onDemandCourses.v1"
-        params = {"q": "slug", "slug": course_slug, "fields": "id"}
-
-        response = self.session.get(url, params=params)
-        if response.status_code == 200:
-            data = response.json()
-            if data.get("elements"):
-                return data["elements"][0].get("id", "")
-        return ""
-
-    def get_supplementary_materials(self, course_id: str) -> list:
-        """
-        Get supplementary materials (PDFs, slides, etc.) for a course.
-
-        Args:
-            course_id: The course ID
-
-        Returns:
-            List of supplementary material URLs
-        """
-        materials = []
-
-        # Get course modules
-        url = f"{self.API_URL}/onDemandCourseMaterialItems.v2"
-        params = {
-            "q": "byCourse",
-            "courseId": course_id,
-            "includes": "assets",
-            "fields": "name,slug,contentSummary,assets.v1(name,url,typeName)",
-        }
-
-        response = self.session.get(url, params=params)
-        if response.status_code == 200:
-            data = response.json()
-            for element in data.get("elements", []):
-                content = element.get("contentSummary", {})
-                if content.get("typeName") == "supplement":
-                    materials.append(
-                        {
-                            "name": element.get("name", "Unknown"),
-                            "slug": element.get("slug", ""),
-                            "id": element.get("id", ""),
-                        }
-                    )
-        return materials
-
-    def get_supplement_assets(self, course_slug: str, item_id: str) -> list:
-        """
-        Get downloadable assets from a supplement item.
-
-        Args:
-            course_slug: Course slug
-            item_id: The supplement item ID
-
-        Returns:
-            List of asset URLs
-        """
-        assets = []
-
-        # Try to get the supplement content directly
-        url = f"{self.BASE_URL}/learn/{course_slug}/supplement/{item_id}"
-        response = self.session.get(url)
-
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.text, "html.parser")
-
-            # Look for PDF links
-            for link in soup.find_all("a", href=True):
-                href = link["href"]
-                if any(ext in href.lower() for ext in [".pdf", ".pptx", ".docx", ".zip"]):
-                    assets.append(
-                        {"url": href, "name": link.get_text(strip=True) or Path(href).name}
-                    )
-
-            # Look for embedded resources
-            for script in soup.find_all("script"):
-                if script.string and "assets" in script.string:
-                    try:
-                        # Try to extract JSON data
-                        match = re.search(r'"url"\s*:\s*"([^"]+\.pdf[^"]*)"', script.string)
-                        if match:
-                            assets.append({"url": match.group(1), "name": "supplement.pdf"})
-                    except Exception:
-                        pass
-
-        return assets
-
-    def get_lecture_resources(self, course_slug: str) -> list:
-        """
-        Get all lecture resources including slides and reading materials.
-
-        Args:
-            course_slug: The course URL slug
-
-        Returns:
-            List of resources with download URLs
-        """
-        resources = []
-
-        # Get course structure from the course page
-        course_url = f"{self.BASE_URL}/learn/{course_slug}/home/welcome"
-        response = self.session.get(course_url)
-
-        if response.status_code != 200:
-            # Try alternative URL
-            course_url = f"{self.BASE_URL}/learn/{course_slug}"
-            response = self.session.get(course_url)
-
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.text, "html.parser")
-
-            # Extract embedded JSON data
-            for script in soup.find_all("script"):
-                if script.string and "window.__APOLLO_STATE__" in script.string:
-                    try:
-                        match = re.search(
-                            r"window\.__APOLLO_STATE__\s*=\s*({.+?});", script.string, re.DOTALL
-                        )
-                        if match:
-                            data = json.loads(match.group(1))
-                            resources.extend(self._extract_resources_from_apollo(data))
-                    except json.JSONDecodeError:
-                        pass
-
-        return resources
-
-    def _extract_resources_from_apollo(self, data: dict) -> list:
-        """Extract resource URLs from Apollo state data."""
-        resources = []
-
-        for key, value in data.items():
-            if isinstance(value, dict):
-                # Look for asset URLs
-                if "url" in value and isinstance(value["url"], str):
-                    url = value["url"]
-                    if any(
-                        ext in url.lower() for ext in [".pdf", ".pptx", ".docx", ".zip", ".ipynb"]
-                    ):
-                        resources.append(
-                            {"url": url, "name": value.get("name", Path(url).name), "type": "asset"}
-                        )
-
-                # Look for video subtitle/resource links
-                if "definition" in value:
-                    defn = value["definition"]
-                    if isinstance(defn, dict) and "assets" in defn:
-                        for asset in defn.get("assets", []):
-                            if isinstance(asset, dict) and "url" in asset:
-                                resources.append(
-                                    {
-                                        "url": asset["url"],
-                                        "name": asset.get("name", "resource"),
-                                        "type": "lecture_asset",
-                                    }
-                                )
-
-        return resources
-
     def download_file(self, url: str, filepath: Path, desc: str = None) -> bool:
-        """
-        Download a file with progress bar.
-
-        Args:
-            url: URL to download
-            filepath: Local path to save file
-            desc: Description for progress bar
-
-        Returns:
-            True if successful, False otherwise
-        """
+        """Download a file with progress bar."""
         try:
-            # Handle relative URLs
-            if url.startswith("/"):
-                url = urljoin(self.BASE_URL, url)
-
-            response = self.session.get(url, stream=True, allow_redirects=True)
+            response = self.session.get(url, stream=True, timeout=30)
             response.raise_for_status()
 
             total_size = int(response.headers.get("content-length", 0))
-
             filepath.parent.mkdir(parents=True, exist_ok=True)
 
             with open(filepath, "wb") as f:
-                with tqdm(
-                    total=total_size,
-                    unit="B",
-                    unit_scale=True,
-                    desc=desc or filepath.name,
-                    disable=total_size == 0,
-                ) as pbar:
+                if total_size > 0:
+                    with tqdm(
+                        total=total_size,
+                        unit="B",
+                        unit_scale=True,
+                        desc=desc or filepath.name,
+                    ) as pbar:
+                        for chunk in response.iter_content(chunk_size=8192):
+                            if chunk:
+                                f.write(chunk)
+                                pbar.update(len(chunk))
+                else:
+                    # No content-length header, just download
+                    print(f"  Downloading {desc or filepath.name}...")
                     for chunk in response.iter_content(chunk_size=8192):
                         if chunk:
                             f.write(chunk)
-                            pbar.update(len(chunk))
 
-            return True
+            # Verify it's a valid PDF
+            if filepath.exists() and filepath.stat().st_size > 1000:
+                with open(filepath, "rb") as f:
+                    header = f.read(4)
+                    if header == b"%PDF":
+                        return True
+                    else:
+                        filepath.unlink()
+                        return False
+
+            return filepath.exists() and filepath.stat().st_size > 1000
 
         except requests.RequestException as e:
-            print(f"Failed to download {url}: {e}")
+            if filepath.exists():
+                filepath.unlink()
+            return False
+        except Exception as e:
+            if filepath.exists():
+                filepath.unlink()
             return False
 
-    def sanitize_filename(self, name: str) -> str:
-        """Sanitize a string to be used as a filename."""
-        # Remove invalid characters
-        name = re.sub(r'[<>:"/\\|?*]', "", name)
-        # Replace spaces with underscores
-        name = name.replace(" ", "_")
-        # Limit length
-        return name[:200]
+    def try_download_from_github(
+        self, course_num: int, week_num: int, filename: str, filepath: Path
+    ) -> bool:
+        """Try to download from GitHub sources."""
+        for source in GITHUB_SOURCES:
+            if course_num not in source["course_paths"]:
+                continue
 
-    def download_course(self, course_slug: str, course_name: str) -> int:
+            course_path = source["course_paths"][course_num]
+            url = f"{source['base_url']}/{course_path}/{filename}"
+
+            if self.download_file(url, filepath, f"Week {week_num}"):
+                return True
+
+            # Try with "Week X" subfolder
+            url = f"{source['base_url']}/{course_path}/Week%20{week_num}/{filename}"
+            if self.download_file(url, filepath, f"Week {week_num}"):
+                return True
+
+        return False
+
+    def try_download_from_community(
+        self, course_num: int, week_num: int, filepath: Path
+    ) -> bool:
+        """Try to download from DeepLearning.AI community forum."""
+        if course_num in COMMUNITY_URLS and week_num in COMMUNITY_URLS[course_num]:
+            url = COMMUNITY_URLS[course_num][week_num]
+            return self.download_file(url, filepath, f"Week {week_num} (community)")
+        return False
+
+    def download_course(self, course: dict) -> tuple[int, int]:
         """
-        Download all available materials for a course.
-
-        Args:
-            course_slug: Course URL slug
-            course_name: Human-readable course name
+        Download all weeks for a course.
 
         Returns:
-            Number of files downloaded
+            Tuple of (downloaded_count, total_count)
         """
+        course_num = course["number"]
+        course_name = course["name"]
+        course_folder = course["folder"]
+        weeks = course["weeks"]
+
         print(f"\n{'='*60}")
-        print(f"Downloading: {course_name}")
+        print(f"📚 {course_name}")
         print(f"{'='*60}")
 
-        course_dir = self.output_dir / self.sanitize_filename(course_name)
+        course_dir = self.output_dir / course_folder
         course_dir.mkdir(parents=True, exist_ok=True)
 
         downloaded = 0
+        total = len(weeks)
 
-        # Get course ID
-        course_id = self.get_course_id(course_slug)
-        if course_id:
-            print(f"Course ID: {course_id}")
+        for week_info in weeks:
+            week_num = week_info["week"]
+            filename = week_info["filename"]
+            filepath = course_dir / filename
 
-        # Get supplementary materials
-        print("\nFetching supplementary materials...")
-        supplements = self.get_supplementary_materials(course_id) if course_id else []
-        print(f"Found {len(supplements)} supplement items")
+            if filepath.exists() and filepath.stat().st_size > 1000:
+                print(f"  ✓ Week {week_num}: Already downloaded")
+                downloaded += 1
+                continue
 
-        for supp in supplements:
-            assets = self.get_supplement_assets(course_slug, supp.get("slug", ""))
-            for asset in assets:
-                url = asset["url"]
-                name = self.sanitize_filename(asset["name"])
-                if not name.endswith((".pdf", ".pptx", ".docx", ".zip")):
-                    name += ".pdf"
+            print(f"  ⬇ Week {week_num}: Downloading...")
 
-                filepath = course_dir / name
-                if not filepath.exists():
-                    if self.download_file(url, filepath, desc=name):
-                        downloaded += 1
-                        time.sleep(0.5)  # Rate limiting
+            # Try GitHub first
+            success = self.try_download_from_github(course_num, week_num, filename, filepath)
 
-        # Get lecture resources
-        print("\nFetching lecture resources...")
-        resources = self.get_lecture_resources(course_slug)
-        print(f"Found {len(resources)} resources")
+            # Fall back to community forum
+            if not success:
+                success = self.try_download_from_community(course_num, week_num, filepath)
 
-        for resource in resources:
-            url = resource["url"]
-            name = self.sanitize_filename(resource["name"])
+            if success:
+                print(f"  ✓ Week {week_num}: Downloaded successfully")
+                downloaded += 1
+            else:
+                print(f"  ✗ Week {week_num}: Failed to download")
 
-            # Ensure proper extension
-            url_path = urlparse(url).path
-            if "." in Path(url_path).name:
-                ext = Path(url_path).suffix
-                if not name.endswith(ext):
-                    name += ext
+            time.sleep(0.5)  # Rate limiting
 
-            filepath = course_dir / name
-            if not filepath.exists():
-                if self.download_file(url, filepath, desc=name):
-                    downloaded += 1
-                    time.sleep(0.5)  # Rate limiting
+        return downloaded, total
 
-        # Try to get materials from the course materials API
-        print("\nFetching from course materials API...")
-        materials = self.get_course_materials(course_slug)
-        if materials:
-            # Save the course structure as JSON for reference
-            structure_file = course_dir / "course_structure.json"
-            with open(structure_file, "w") as f:
-                json.dump(materials, f, indent=2)
-            print(f"Saved course structure to {structure_file}")
-
-        print(f"\nDownloaded {downloaded} files for {course_name}")
-        return downloaded
-
-    def download_all_courses(self, courses: list = None) -> int:
-        """
-        Download materials from all specified courses.
-
-        Args:
-            courses: List of course dicts with 'slug' and 'name' keys.
-                    If None, downloads all Deep Learning Specialization courses.
-
-        Returns:
-            Total number of files downloaded
-        """
+    def download_all_courses(self, courses: list = None) -> dict:
+        """Download all specified courses."""
         if courses is None:
             courses = DEEP_LEARNING_COURSES
 
-        total_downloaded = 0
+        print("\n" + "=" * 60)
+        print("🎓 DeepLearning.AI Deep Learning Specialization")
+        print("   Lecture Notes Downloader")
+        print("=" * 60)
+        print(f"\nOutput directory: {self.output_dir.absolute()}")
+        print(f"Courses to download: {len(courses)}")
 
-        print(f"Starting download of {len(courses)} courses...")
-        print(f"Output directory: {self.output_dir.absolute()}")
+        results = {}
+        total_downloaded = 0
+        total_files = 0
 
         for course in courses:
-            try:
-                count = self.download_course(course["slug"], course["name"])
-                total_downloaded += count
-            except Exception as e:
-                print(f"Error downloading {course['name']}: {e}")
-                continue
+            downloaded, total = self.download_course(course)
+            results[course["name"]] = {"downloaded": downloaded, "total": total}
+            total_downloaded += downloaded
+            total_files += total
 
-        print(f"\n{'='*60}")
-        print(f"Download complete! Total files: {total_downloaded}")
-        print(f"Files saved to: {self.output_dir.absolute()}")
-        print(f"{'='*60}")
+        # Summary
+        print("\n" + "=" * 60)
+        print("📊 Download Summary")
+        print("=" * 60)
 
-        return total_downloaded
+        for name, stats in results.items():
+            status = "✓" if stats["downloaded"] == stats["total"] else "⚠"
+            print(f"  {status} {name}: {stats['downloaded']}/{stats['total']} files")
+
+        print("-" * 60)
+        print(f"  Total: {total_downloaded}/{total_files} files downloaded")
+        print(f"  Location: {self.output_dir.absolute()}")
+        print("=" * 60)
+
+        return results
 
 
-def get_cauth_instructions():
-    """Return instructions for getting the CAUTH cookie."""
-    return """
-How to get your CAUTH cookie:
-
-1. Open your browser and go to https://www.coursera.org
-2. Log in to your Coursera account
-3. Make sure you're enrolled in the Deep Learning Specialization
-4. Open Developer Tools:
-   - Chrome/Edge: Press F12 or Ctrl+Shift+I (Cmd+Option+I on Mac)
-   - Firefox: Press F12 or Ctrl+Shift+I
-5. Go to the "Application" tab (Chrome) or "Storage" tab (Firefox)
-6. In the left sidebar, expand "Cookies" and click on "https://www.coursera.org"
-7. Find the cookie named "CAUTH"
-8. Copy the entire value (it's a long string)
-9. Use this value with the --cauth argument
-
-Example:
-    python coursera_notes_downloader.py --cauth "your_long_cauth_cookie_value_here"
-
-Note: The CAUTH cookie expires, so you may need to get a fresh one if downloads fail.
-"""
+def list_courses():
+    """Print list of available courses."""
+    print("\n📚 DeepLearning.AI Deep Learning Specialization Courses:")
+    print("-" * 55)
+    for course in DEEP_LEARNING_COURSES:
+        num_weeks = len(course["weeks"])
+        print(f"  {course['number']}. {course['name']}")
+        print(f"     └─ {num_weeks} weeks of lecture notes")
+    print()
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Download lecture notes from Coursera Deep Learning Specialization",
+        description="Download lecture notes from DeepLearning.AI Deep Learning Specialization",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=get_cauth_instructions(),
-    )
+        epilog="""
+Examples:
+  %(prog)s                      Download all courses
+  %(prog)s --course 1           Download only Course 1
+  %(prog)s --course 1 2 3       Download Courses 1, 2, and 3
+  %(prog)s -o my_notes          Save to 'my_notes' directory
+  %(prog)s --list-courses       Show available courses
 
-    parser.add_argument(
-        "--cauth",
-        type=str,
-        help="Your Coursera CAUTH cookie value (required for authentication)",
+Sources:
+  PDFs are downloaded from GitHub repositories that host the
+  official DeepLearning.AI lecture notes.
+        """,
     )
 
     parser.add_argument(
         "--output",
         "-o",
         type=str,
-        default="coursera_notes",
-        help="Output directory for downloaded files (default: coursera_notes)",
+        default="deeplearning_notes",
+        help="Output directory (default: deeplearning_notes)",
     )
 
     parser.add_argument(
         "--course",
         "-c",
         type=int,
+        nargs="+",
         choices=[1, 2, 3, 4, 5],
-        help="Download only a specific course (1-5). If not specified, downloads all courses.",
+        help="Download specific course(s). Can specify multiple.",
     )
 
     parser.add_argument(
-        "--list-courses", action="store_true", help="List all available courses and exit"
-    )
-
-    parser.add_argument(
-        "--instructions", action="store_true", help="Show instructions for getting CAUTH cookie"
+        "--list-courses",
+        "-l",
+        action="store_true",
+        help="List all available courses and exit",
     )
 
     args = parser.parse_args()
 
-    if args.instructions:
-        print(get_cauth_instructions())
-        return
-
     if args.list_courses:
-        print("\nDeepLearning.AI Deep Learning Specialization Courses:")
-        print("-" * 50)
-        for i, course in enumerate(DEEP_LEARNING_COURSES, 1):
-            print(f"  {i}. {course['name']}")
-            print(f"     Slug: {course['slug']}")
-        print()
+        list_courses()
         return
-
-    if not args.cauth:
-        print("Error: --cauth is required for downloading course materials.")
-        print("\nUse --instructions to see how to get your CAUTH cookie.")
-        print("Use --list-courses to see available courses.")
-        sys.exit(1)
 
     # Select courses to download
     if args.course:
-        courses = [DEEP_LEARNING_COURSES[args.course - 1]]
+        courses = [c for c in DEEP_LEARNING_COURSES if c["number"] in args.course]
     else:
         courses = DEEP_LEARNING_COURSES
 
+    if not courses:
+        print("Error: No valid courses selected.")
+        sys.exit(1)
+
     # Create downloader and start
-    downloader = CourseraDownloader(cauth_cookie=args.cauth, output_dir=args.output)
+    downloader = NotesDownloader(output_dir=args.output)
 
     try:
         downloader.download_all_courses(courses)
     except KeyboardInterrupt:
-        print("\n\nDownload interrupted by user.")
+        print("\n\n⚠ Download interrupted by user.")
         sys.exit(1)
     except Exception as e:
-        print(f"\nError during download: {e}")
+        print(f"\n❌ Error during download: {e}")
         sys.exit(1)
 
 
